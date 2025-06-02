@@ -1,0 +1,1 @@
+# sinapsense-reconhecimento-emocional
