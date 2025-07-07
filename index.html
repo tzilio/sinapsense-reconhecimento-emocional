@@ -1,159 +1,106 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <title>Emoções – Tabela + Gráfico</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análise de Emoções por Reconhecimento Facial</title>
 
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <script src="https://cdn.jsdelivr.net/npm/vue@2.7/dist/vue.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>
-
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; }
-    #chart { max-width: 100%; }
-    input { margin: 1rem 0; }
-    .table thead th { vertical-align: bottom; }
-  </style>
+    <!-- CSS externo -->
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="app">
-    <h3>Registros &nbsp;<small class="text-muted">(CSV &rarr; tabela + gráfico)</small></h3>
+    <div class="container">
+        <h1>Análise de Emoções por Reconhecimento Facial</h1>
+        
+        <div class="upload-section">
+            <div class="upload-box">
+                <h3>Upload do CSV de Análise</h3>
+                <input type="file" id="csvFile" accept=".csv">
+                <p>Arraste ou clique para enviar o arquivo CSV</p>
+            </div>
+            <div class="upload-box">
+                <h3>Upload do Vídeo</h3>
+                <input type="file" id="videoFile" accept="video/*">
+                <p>Arraste ou clique para enviar o vídeo</p>
+            </div>
+        </div>
+        
+        <button id="analyzeBtn" disabled>Analisar Dados</button>
+        
+        <div class="video-container" id="videoContainer">
+            <video id="videoPlayer" controls></video>
+            <div class="slider-container">
+                <input type="range" min="0" max="100" value="0" class="slider" id="timeSlider">
+                <div class="time-display">
+                    <span id="currentTime">00:00</span>
+                    <span id="totalTime">00:00</span>
+                </div>
+            </div>
+        </div>
+        
+        <label for="chartSelector" class="chart-label">Visualização:</label>
+        <select id="chartSelector" class="chart-selector">
+            <option value="bar">Emoção Atual (Barras)</option>
+            <option value="timeline">Linha do Tempo</option>
+            <option value="radar">Radar de Emoções</option>
+        </select>
+        <div class="analysis-container">
+            <div class="person-selector">
+                <h3>Pessoas Analisadas</h3>
+                <div class="person-list" id="personList">
+                    <p>Nenhuma pessoa carregada</p>
+                </div>
+                <button id="showAverageBtn" class="average-btn" disabled>Mostrar Média de Todas as Pessoas</button>
+                <div class="emotion-info">
+                    <h3>Informações da Emoção</h3>
+                    <div class="current-emotion" id="currentEmotion">Nenhuma emoção detectada</div>
+                    <div class="emotion-details" id="emotionDetails">
+                        <!-- Emotion bars will be inserted here -->
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-container">
+                <canvas id="barChart" height="400" class="emotion-chart"></canvas>
+                <canvas id="timelineChart" height="150" class="emotion-chart mt-30"></canvas>
+                <canvas id="radarChart" height="300" class="emotion-chart mt-30"></canvas>
 
-    <input type="file" accept=".csv" class="form-control-file" @change="handleFile">
-
-    <div v-if="rows.length">
-      <table class="table table-sm table-striped table-hover">
-        <thead class="thead-light">
-          <tr>
-            <th>#</th>
-            <th>Data-Hora</th>
-            <th>Participante</th>
-            <th v-for="emo in emotions" :key="'head-'+emo">{{ emo }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(row, i) in rows" :key="'row-'+i"
-              :class="{'table-primary': i === selectedRow}"
-              @click="selectedRow = i">
-            <td>{{ i+1 }}</td>
-            <td>{{ row.DataHora || row['Data-Hora'] }}</td>
-            <td>{{ 'Participante ' + (i+1) }}</td>
-            <td v-for="emo in emotions" :key="'cell-'+emo">
-              {{ formatPercent(avg(row[emo])) }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #e74c3c;"></div>
+                        <span>Raiva</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #f39c12;"></div>
+                        <span>Felicidade</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #2ecc71;"></div>
+                        <span>Tristeza</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #27ae60;"></div>
+                        <span>Nojo</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #f1c40f;"></div>
+                        <span>Surpresa</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #c0392b;"></div>
+                        <span>Medo</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #3498db;"></div>
+                        <span>Neutro</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-
-    <canvas id="chart" v-if="rows.length"></canvas>
-  </div>
-
-  <script>
-    new Vue({
-      el: '#app',
-      data: {
-        rows: [],
-        selectedRow: 0,
-        chart: null,
-        emotions: [
-          'Neutral', 'Happy', 'Sad',
-          'Angry', 'Disgusted', 'Surprised', 'Fearful'
-        ],
-        palette: [
-          '#1f77b4', // Neutral
-          '#ff7f0e', // Happy
-          '#d62728', // Sad
-          '#9467bd', // Angry
-          '#2ca02c', // Disgusted
-          '#8c564b', // Surprised
-          '#17becf'  // Fearful
-        ]
-      },
-      methods: {
-        //CSV 
-        handleFile (e) {
-          const file = e.target.files[0];
-          if (!file) return;
-
-          Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            complete: res => {
-              this.rows = res.data;
-              this.selectedRow = 0;
-              this.$nextTick(this.drawChart);
-            },
-            error: err => alert('Falha ao ler CSV: ' + err.message)
-          });
-        },
-
-        // Gráfico
-        drawChart () {
-          if (!this.rows.length) return;
-
-          if (this.chart) this.chart.destroy();
-
-          const row = this.rows[this.selectedRow];
-          const labels = [];
-          const datasets = [];
-
-          this.emotions.forEach((emo, idx) => {
-            if (!row[emo]) return;
-
-            const vals = row[emo].split(';').map(Number);
-            if (labels.length < vals.length)
-              vals.forEach((_, i) => labels[i] = i + 1);
-
-            datasets.push({
-              label: emo,
-              data: vals,
-              borderColor: this.palette[idx],
-              backgroundColor: this.palette[idx],
-              fill: false,
-              borderWidth: 2,
-              pointRadius: 0
-            });
-          });
-
-          const ctx = document.getElementById('chart').getContext('2d');
-          this.chart = new Chart(ctx, {
-            type: 'line',
-            data: { labels, datasets },
-            options: {
-              responsive: true,
-              legend: { position: 'bottom' },
-              tooltips: { mode: 'index', intersect: false },
-              hover: { mode: 'nearest', intersect: true },
-              scales: {
-                xAxes: [{
-                  display: true,
-                  scaleLabel: { display: true, labelString: 'Frame' }
-                }],
-                yAxes: [{
-                  ticks: { beginAtZero: true, suggestedMax: 1 },
-                  scaleLabel: { display: true, labelString: 'Probabilidade' }
-                }]
-              }
-            }
-          });
-        },
-
-        // Helpers
-        avg (str) {
-          if (!str) return 0;
-          const arr = str.split(';').map(Number);
-          return arr.reduce((s, v) => s + v, 0) / arr.length;
-        },
-        formatPercent (v) { return (v*100).toFixed(1) + '%'; }
-      },
-      watch: {
-        selectedRow () { this.drawChart(); }
-      }
-    });
-  </script>
+    <script src="script.js"></script>
 </body>
 </html>
