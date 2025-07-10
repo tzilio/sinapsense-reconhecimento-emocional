@@ -13,6 +13,19 @@ body {
     border-radius: 10px;
     box-shadow: 0 0 20px rgba(0,0,0,0.1);
 }
+
+.logo-container {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+/* Estilo do logo */
+.logo {
+  max-width: 400px;
+  height: auto;
+  display: inline-block;
+}
+
 h1 {
     color: #2c3e50;
     text-align: center;
