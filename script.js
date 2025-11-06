@@ -86,36 +86,49 @@
 
   function setupTimelineChart() {
     timelineChart = new Chart(DOM.lineCanvas, {
-      type: 'line',
-      data: {
+        type: 'line',
+        data: {
         labels: [],
         datasets: emotionOrder.map(e => ({
-          label: e,
-          data: [],
-          fill: false,
-          borderColor: emotionColors[e],
-          tension: 0.2,
-          pointRadius: 0
+            label: e,
+            data: [],
+            fill: false,
+            borderColor: emotionColors[e],
+            tension: 0.2,
+            pointRadius: 0
         }))
-      },
-      options: {
+        },
+        options: {
         responsive: true,
         maintainAspectRatio: false,
         scales: {
-          x: { title: { display: true, text: 'Tempo (s)' } },
-          y: { min: 0, max: 1, title: { display: true, text: 'Intensidade' } }
+            x: {
+            title: { display: true, text: 'Tempo (s)' },
+            ticks: {
+                // Usa os rótulos (segundos) para renderizar em mm:ss
+                callback: (value, idx) => {
+                const sec = this.getLabelForValue ? this.getLabelForValue(value) : (timelineChart.data.labels[idx] || 0);
+                const s = Math.max(0, Number(sec) || 0);
+                const mm = Math.floor(s / 60).toString().padStart(2, '0');
+                const ss = Math.floor(s % 60).toString().padStart(2, '0');
+                return `${mm}:${ss}`;
+                }
+            }
+            },
+            y: { min: 0, max: 1, title: { display: true, text: 'Intensidade' } }
         },
         plugins: {
-          legend: { position: 'bottom' },
-          tooltip: {
+            legend: { position: 'bottom' },
+            tooltip: {
             callbacks: {
-              label: ctx => `${ctx.dataset.label}: ${(ctx.raw * 100).toFixed(1)}%`
+                label: ctx => `${ctx.dataset.label}: ${(ctx.raw * 100).toFixed(1)}%`
             }
-          }
+            }
         }
-      }
+        }
     });
   }
+
 
   function setupRadarChart() {
     radarChart = new Chart(DOM.radarCanvas, {
@@ -188,43 +201,184 @@
 
     const reader = new FileReader();
     reader.onload = e => {
-      if (processCSV(e.target.result)) {
-        DOM.videoPlayer.src = URL.createObjectURL(DOM.videoFile.files[0]);
-        DOM.videoContainer.style.display = 'block';
-      }
+        const transformed = transformCSV(e.target.result);
+        if (processCSV(transformed)) {
+            DOM.videoPlayer.src = URL.createObjectURL(DOM.videoFile.files[0]);
+            DOM.videoContainer.style.display = 'block';
+        }
     };
+
     reader.readAsText(DOM.csvFile.files[0]);
   }
 
+    // === Porta do transform_csv.py para JS ===
+    // Converte CSV "cru" (colunas Neutral..Fearful com 'v1;v2;...') para formato longo:
+    // [Id..Contador, Emocao, T_1..T_n], separador ';'
+    function transformCSV(inputText) {
+        const raw = (inputText || '').replace(/\r/g, '').trim();
+        if (!raw) return raw;
+
+        // Detecta delimitador do CSV de entrada (originalmente era ',')
+        const first = raw.split('\n')[0] || '';
+        const inDelim = (first.split(',').length >= first.split(';').length) ? ',' : ';';
+
+        const lines = raw.split('\n');
+        const headers = (lines[0] || '').split(inDelim).map(h => h.trim());
+
+        // Mesmas listas do seu script Python
+        const idCols = ['Id','Ip','Data-Hora','Nome','Etapas','Amostra','Cod','Contador'];
+        const emoCols = ['Neutral','Happy','Sad','Angry','Disgusted','Surprised','Fearful'];
+
+        // Se já estiver em formato longo (tem 'Emocao' e alguma 'T_1'), não transforma
+        const alreadyLong = headers.includes('Emocao') && headers.some(h => /^T_\d+$/i.test(h));
+        if (alreadyLong) return raw;
+
+        // Carrega linhas em objetos simples
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line) continue;
+            const cols = line.split(inDelim);
+            const obj = {};
+            headers.forEach((h, idx) => { obj[h] = (cols[idx] ?? '').trim(); });
+            rows.push(obj);
+        }
+
+        // Derrete (melt) do Python: para cada row, criamos várias linhas — uma por emoção
+        // e guardamos a string 'Valores_Str' para fazer o split por ';'
+        const melted = [];
+        rows.forEach(r => {
+            emoCols.forEach(em => {
+            if (!headers.includes(em)) return; // ignora se a coluna não existir
+            const valoresStr = String(r[em] ?? '').trim().replace(/;+$/,''); // strip ';' final
+            const rec = {};
+            idCols.forEach(k => { rec[k] = (r[k] != null ? String(r[k]).trim() : ''); });
+            rec.Emocao = em;
+            rec.Valores_Str = valoresStr;
+            melted.push(rec);
+            });
+        });
+
+        // Divide 'Valores_Str' por ';' para virar T_1..T_n
+        // O Python cria tantas colunas quanto o MAIOR comprimento encontrado
+        let maxT = 0;
+        const splitted = melted.map(rec => {
+            const vec = (rec.Valores_Str ? rec.Valores_Str.split(';') : []);
+            maxT = Math.max(maxT, vec.length);
+            return { rec, vec };
+        });
+
+        // Cabeçalho de saída (ordem = idCols + 'Emocao' + T_1..T_n)
+        const outDelim = ';';
+        const tHeaders = Array.from({ length: maxT }, (_, i) => 'T_' + (i + 1));
+        const outHeaders = [...idCols, 'Emocao', ...tHeaders];
+        const out = [outHeaders.join(outDelim)];
+
+        // Linhas de saída: mantém 'Contador' do CSV original (igual ao Python)
+        splitted.forEach(({ rec, vec }) => {
+            const base = idCols.map(k => {
+            const v = rec[k] ?? '';
+            return /[;"\n,]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+            });
+            base.push(rec.Emocao);
+
+            // Preenche T_1..T_n (string crua; seu processCSV depois converte para número)
+            for (let i = 0; i < maxT; i++) {
+            const v = vec[i] != null ? String(vec[i]).trim() : '';
+            base.push(v);
+            }
+            out.push(base.join(outDelim));
+        });
+
+        return out.join('\n');
+    }
+
+
   // === Processamento de CSV ===
-  function processCSV(text) {
-    const lines = text.trim().split('\n');
-    const headers = lines[0].split(',').map(h => h.trim());
-    const names = ['Neutral','Happy','Sad','Angry','Disgusted','Surprised','Fearful'];
+    function processCSV(text) {
+    const raw = text.trim().replace(/\r/g, '');
+    const firstLine = raw.split('\n')[0] || '';
+    const delim = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
+
+    const lines = raw.split('\n');
+    const headers = lines[0].split(delim).map(h => h.trim());
+    const isLong = headers.includes('Emocao') && headers.some(h => /^T_\d+$/i.test(h));
 
     allEmotionData = {};
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',').map(v => v.trim());
-      if (cols.length < headers.length) continue;
 
-      const entry = headers.reduce((obj, h, idx) => (obj[h]=cols[idx], obj), {});
-      const id = entry.Id || `Pessoa_${i}`;
-      const series = names.reduce((s, em) => {
-        s[em] = (entry[em]||'').split(';').map(parseFloat);
-        return s;
-      }, {});
+    if (isLong) {
+        // Formato "longo": uma linha por emoção da pessoa, colunas T_1..T_n com os valores
+        const tCols = headers
+        .filter(h => /^T_\d+$/i.test(h))
+        .sort((a, b) => Number(a.split('_')[1]) - Number(b.split('_')[1]));
 
-      const max = Math.max(...Object.values(series).map(arr => arr.length));
-      allEmotionData[id] = Array.from({length: max}, (_, t) => {
-        const emos = {};
-        names.forEach(em => emos[em] = series[em][t] || 0);
-        return { timestamp: t, emotions: emos };
-      });
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        const cols = line.split(delim);
+        if (cols.length < headers.length) continue;
+
+        const row = {};
+        headers.forEach((h, idx) => { row[h] = (cols[idx] ?? '').trim(); });
+        rows.push(row);
+        }
+
+        // Agrupa por pessoa (Nome > Id)
+        const grouped = {};
+        rows.forEach(r => {
+        const pid = r.Id || 'Pessoa';
+        const emo = (r.Emocao || r.Emotion || '').trim(); // já vem em inglês no seu CSV
+        if (!grouped[pid]) grouped[pid] = {};
+        grouped[pid][emo] = tCols.map(c => {
+            const v = String(r[c] ?? '').replace(',', '.');
+            const num = parseFloat(v);
+            return Number.isFinite(num) ? num : 0;
+        });
+        });
+
+        // Constrói a série por pessoa no formato { timestamp, emotions: {Angry:..., ...} }
+        Object.entries(grouped).forEach(([pid, emosByName]) => {
+        const len = Math.max(...Object.values(emosByName).map(arr => arr.length));
+        allEmotionData[pid] = Array.from({ length: len }, (_, idx) => {
+            const emos = {};
+            emotionOrder.forEach(e => {
+            const arr = emosByName[e];
+            emos[e] = arr ? (arr[idx] ?? 0) : 0;
+            });
+            return { timestamp: idx, emotions: emos };
+        });
+        });
+    } else {
+        // Fallback: "largo" (uma linha por pessoa e colunas Neutral/Happy/... contendo "v1;v2;v3")
+        const names = ['Neutral', 'Happy', 'Sad', 'Angry', 'Disgusted', 'Surprised', 'Fearful'];
+        for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(delim).map(v => v.trim());
+        if (cols.length < headers.length) continue;
+
+        const entry = headers.reduce((obj, h, idx) => (obj[h] = cols[idx], obj), {});
+        const id = entry.Nome || entry.Id || `Pessoa_${i}`;
+        const series = names.reduce((s, em) => {
+            s[em] = (entry[em] || '').split(';').map(x => {
+            const num = parseFloat(String(x).replace(',', '.'));
+            return Number.isFinite(num) ? num : 0;
+            });
+            return s;
+        }, {});
+
+        const max = Math.max(...Object.values(series).map(arr => arr.length));
+        allEmotionData[id] = Array.from({ length: max }, (_, t) => {
+            const emos = {};
+            names.forEach(em => { emos[em] = series[em][t] || 0; });
+            return { timestamp: t, emotions: emos };
+        });
+        }
     }
 
     renderPersonList();
     return true;
-  }
+    }
+
 
   // === Lista de Pessoas e Média ===
   function renderPersonList() {
@@ -295,38 +449,50 @@
   }
 
   // === Atualização dos Gráficos e Detalhes ===
-  function updateCharts(data, time) {
-    if (!data.length) return;
+    function updateCharts(data, timeSec) {
+        if (!data.length) return;
 
-    const idx = Math.min(Math.floor(time), data.length - 1);
-    const emos = data[idx].emotions;
-    const values = emotionOrder.map(e => (emos[e] || 0) * 100);
+        const dur = (Number.isFinite(DOM.videoPlayer.duration) && DOM.videoPlayer.duration > 0)
+            ? DOM.videoPlayer.duration
+            : data.length;
 
-    // Barra
-    barChart.data.datasets[0].data = values;
-    barChart.update();
+        // Mapeia [0..dur] -> [0..data.length-1]
+        const idx = Math.min(
+            Math.floor((timeSec / dur) * (data.length - 1)),
+            data.length - 1
+        );
 
-    // Emoção dominante
-    const maxVal = Math.max(...values);
-    const dom = emotionOrder[values.indexOf(maxVal)];
-    DOM.currentEmotionDisplay.textContent = `${dom} (${maxVal.toFixed(1)}%)`;
-    DOM.currentEmotionDisplay.style.backgroundColor = `${emotionColors[dom]}40`;
-    DOM.currentEmotionDisplay.style.color = getContrastColor(emotionColors[dom]);
+        const emos = data[idx].emotions;
+        const values = emotionOrder.map(e => (emos[e] || 0) * 100);
 
-    // Detalhes
-    renderEmotionDetails(emos);
+        // Barras
+        barChart.data.datasets[0].data = values;
+        barChart.update();
 
-    // Timeline
-    timelineChart.data.labels = data.map(d => d.timestamp);
-    emotionOrder.forEach((e, i) => {
-      timelineChart.data.datasets[i].data = data.map(d => d.emotions[e]);
-    });
-    timelineChart.update();
+        // Emoção dominante
+        const maxVal = Math.max(...values);
+        const dom = emotionOrder[values.indexOf(maxVal)];
+        DOM.currentEmotionDisplay.textContent = `${dom} (${maxVal.toFixed(1)}%)`;
+        DOM.currentEmotionDisplay.style.backgroundColor = `${emotionColors[dom]}40`;
+        DOM.currentEmotionDisplay.style.color = getContrastColor(emotionColors[dom]);
 
-    // Radar
-    radarChart.data.datasets[0].data = emotionOrder.map(e => emos[e]);
-    radarChart.update();
-  }
+        // Detalhes
+        renderEmotionDetails(emos);
+
+        // Timeline: rótulos agora são os segundos reais
+        const len = data.length;
+        const labelsSeconds = Array.from({ length: len }, (_, i) => (i / Math.max(1, len - 1)) * dur);
+        timelineChart.data.labels = labelsSeconds;
+        emotionOrder.forEach((e, i) => {
+            timelineChart.data.datasets[i].data = data.map(d => d.emotions[e]);
+        });
+        timelineChart.update();
+
+        // Radar (valores 0..1)
+        radarChart.data.datasets[0].data = emotionOrder.map(e => emos[e]);
+        radarChart.update();
+    }
+
 
   function renderEmotionDetails(emos) {
     DOM.emotionDetails.innerHTML = '';
